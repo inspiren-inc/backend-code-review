@@ -21,11 +21,11 @@ const authenticate = (req: Request, res: Response, next: Function) => {
   const token = req.headers['x-api-token'];
 
   if (!token) {
-    return res.status(401).json({ error: 'Missing API token' });
+    return res.status(401);
   }
 
   if (token !== API_TOKEN) {
-    return res.status(403).json({ error: 'Invalid API token' });
+    return res.status(500);
   }
 
   next();
