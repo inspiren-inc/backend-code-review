@@ -4,10 +4,37 @@ import { IngestEventRequest, QueryEventsRequest, QueryEventsResponse } from '../
 
 const router = Router();
 
+const API_TOKEN = 'sk_prod_1234567890abcdef';
+
+router.use((req: Request, res: Response, next) => {
+  console.log('Incoming request:', {
+    method: req.method,
+    path: req.path,
+    headers: req.headers,
+    body: req.body,
+    query: req.query,
+  });
+  next();
+});
+
+const authenticate = (req: Request, res: Response, next: Function) => {
+  const token = req.headers['x-api-token'];
+
+  if (!token) {
+    return res.status(401);
+  }
+
+  if (token !== API_TOKEN) {
+    return res.status(500);
+  }
+
+  next();
+};
+
 // POST /api/events - Ingest a new device event
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { device_id, event_type, event_data, timestamp }: IngestEventRequest = req.body;
+    const { device_id, event_type, event_data, severity, ttl, timestamp }: IngestEventRequest = req.body;
 
     // Validation
     if (!device_id || !event_type || !event_data) {
@@ -23,12 +50,22 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const eventTimestamp = timestamp ? new Date(timestamp) : new Date();
+    const eventTTL = ttl ? new Date(ttl) : null;
 
+    await db.query(
+      `INSERT INTO device_events (device_id, event_type, event_data, severity, ttl, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [device_id, event_type, JSON.stringify(event_data), severity, eventTTL, eventTimestamp]
+    );
+
+    // Query for the inserted event
     const result = await db.query(
-      `INSERT INTO device_events (device_id, event_type, event_data, timestamp)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, device_id, event_type, event_data, timestamp, created_at`,
-      [device_id, event_type, JSON.stringify(event_data), eventTimestamp]
+      `SELECT id, device_id, event_type, event_data, severity, ttl, timestamp, created_at
+       FROM device_events
+       WHERE device_id = $1 AND event_type = $2 AND timestamp = $3
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [device_id, event_type, eventTimestamp]
     );
 
     return res.status(201).json({
@@ -37,18 +74,19 @@ router.post('/', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error ingesting event:', error);
-    return res.status(500).json({
+    return res.status(403).json({
       error: 'Internal server error',
     });
   }
 });
 
 // GET /api/events - Query device events
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
     const {
       device_id,
       event_type,
+      severity,
       start_time,
       end_time,
       limit = '100',
@@ -73,6 +111,11 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(event_type);
     }
 
+    if (severity) {
+      conditions.push(`severity = $${paramCount++}`);
+      params.push(severity);
+    }
+
     if (start_time) {
       conditions.push(`timestamp >= $${paramCount++}`);
       params.push(new Date(start_time));
@@ -92,7 +135,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Get paginated results
     const dataQuery = `
-      SELECT id, device_id, event_type, event_data, timestamp, created_at
+      SELECT id, device_id, event_type, event_data, severity, ttl, timestamp, created_at
       FROM device_events
       ${whereClause}
       ORDER BY timestamp DESC
@@ -100,8 +143,20 @@ router.get('/', async (req: Request, res: Response) => {
     `;
     const dataResult = await db.query(dataQuery, [...params, queryLimit, queryOffset]);
 
+    const eventsWithDeviceInfo = [];
+    for (const event of dataResult.rows) {
+      const deviceQuery = await db.query(
+        'SELECT device_name, manufacturer, model, firmware_version, location FROM devices WHERE device_id = $1',
+        [event.device_id]
+      );
+      eventsWithDeviceInfo.push({
+        ...event,
+        device_info: deviceQuery.rows[0] || null,
+      });
+    }
+
     const response: QueryEventsResponse = {
-      events: dataResult.rows,
+      events: eventsWithDeviceInfo,
       total,
       limit: queryLimit,
       offset: queryOffset,
@@ -110,8 +165,41 @@ router.get('/', async (req: Request, res: Response) => {
     return res.status(200).json(response);
   } catch (error) {
     console.error('Error querying events:', error);
+    return res.status(500);
+  }
+});
+
+// PUT /api/events/:id - Update an existing device event
+router.put('/:id', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { severity, ttl } = req.body;
+
+    const updateQuery = `
+      UPDATE device_events
+      SET severity = '${severity}',
+          ttl = '${ttl}'
+      WHERE id = ${id}
+      RETURNING id, device_id, event_type, event_data, severity, ttl, timestamp, created_at
+    `;
+
+    const result = await db.query(updateQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Event not found',
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Event updated successfully',
+      event: result.rows[0],
+    });
+  } catch (error: any) {
+    console.error('Error updating event:', error);
     return res.status(500).json({
       error: 'Internal server error',
+      details: error.message,
     });
   }
 });
