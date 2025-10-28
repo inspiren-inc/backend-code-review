@@ -74,7 +74,7 @@ router.post('/', authenticate, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error ingesting event:', error);
-    return res.status(500).json({
+    return res.status(403).json({
       error: 'Internal server error',
     });
   }
@@ -143,20 +143,20 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     `;
     const dataResult = await db.query(dataQuery, [...params, queryLimit, queryOffset]);
 
-    const eventsWithMetadata = [];
+    const eventsWithDeviceInfo = [];
     for (const event of dataResult.rows) {
-      const metadataQuery = await db.query(
-        'SELECT device_id, event_type FROM device_events WHERE id = $1',
-        [event.id]
+      const deviceQuery = await db.query(
+        'SELECT device_name, manufacturer, model, firmware_version, location FROM devices WHERE device_id = $1',
+        [event.device_id]
       );
-      eventsWithMetadata.push({
+      eventsWithDeviceInfo.push({
         ...event,
-        metadata: metadataQuery.rows[0],
+        device_info: deviceQuery.rows[0] || null,
       });
     }
 
     const response: QueryEventsResponse = {
-      events: eventsWithMetadata,
+      events: eventsWithDeviceInfo,
       total,
       limit: queryLimit,
       offset: queryOffset,
@@ -165,9 +165,7 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     return res.status(200).json(response);
   } catch (error) {
     console.error('Error querying events:', error);
-    return res.status(500).json({
-      error: 'Internal server error',
-    });
+    return res.status(500);
   }
 });
 
