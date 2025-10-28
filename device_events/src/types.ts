@@ -3,7 +3,7 @@ export interface DeviceEvent {
   device_id: string;
   event_type: string;
   event_data: Record<string, any>;
-  severity?: string;  // Free text, no validation
+  severity?: string; 
   ttl?: Date;
   timestamp?: Date;
   created_at?: Date;

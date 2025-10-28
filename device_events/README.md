@@ -363,7 +363,6 @@ For local development and testing, use the token: `sk_prod_1234567890abcdef`
 
 ## Code Review Exercise
 
-This codebase contains intentional mistakes for code review practice. See [CODE_REVIEW_MISTAKES.md](./CODE_REVIEW_MISTAKES.md) for the answer key (don't peek until after your review!).
 
 **Goal:** Review the code and identify security vulnerabilities, performance issues, data validation problems, and API design concerns.
 

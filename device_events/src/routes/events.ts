@@ -52,11 +52,20 @@ router.post('/', authenticate, async (req: Request, res: Response) => {
     const eventTimestamp = timestamp ? new Date(timestamp) : new Date();
     const eventTTL = ttl ? new Date(ttl) : null;
 
-    const result = await db.query(
+    await db.query(
       `INSERT INTO device_events (device_id, event_type, event_data, severity, ttl, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, device_id, event_type, event_data, severity, ttl, timestamp, created_at`,
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [device_id, event_type, JSON.stringify(event_data), severity, eventTTL, eventTimestamp]
+    );
+
+    // Query for the inserted event
+    const result = await db.query(
+      `SELECT id, device_id, event_type, event_data, severity, ttl, timestamp, created_at
+       FROM device_events
+       WHERE device_id = $1 AND event_type = $2 AND timestamp = $3
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [device_id, event_type, eventTimestamp]
     );
 
     return res.status(201).json({
